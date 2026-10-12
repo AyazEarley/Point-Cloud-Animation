@@ -5,6 +5,9 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+#include <cmath>
+#include <random>
+#include "FastNoiseLite.h"
 
 #ifdef _WIN32
   #define POPEN  _popen
@@ -20,7 +23,20 @@ struct Particle {
     Vector3 home = {0, 0, 0};
     Vector3 pos = {0, 0, 0};
     Color color = {255, 255, 255, 255};
+    Vector3 vectorSeed = {0,0,0};
+
+    float dy = 0.0f;
+    float phase = 0.0f;
 };
+
+float randomPhase(){
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<float> dis(0.0f, 2.0f);
+    float random_value = dis(gen);
+    
+    return random_value * PI;
+}
 
 int main() {
     constexpr int   W            = 1920;
@@ -42,15 +58,23 @@ int main() {
     cam.fovy = 45.0f;
     cam.projection = CAMERA_PERSPECTIVE;
 
+    FastNoiseLite noise;
+    noise.SetNoiseType(FastNoiseLite::NoiseType_OpenSimplex2);
+    noise.SetFrequency(1.0f);
+
     happly::PLYData ply("C:/Users/Wreck/OneDrive/Desktop/raylib/data/fern.ply");
     std::vector<std::array<double, 3>> positions = ply.getVertexPositions();
     std::vector<std::array<unsigned char, 3>> colors = ply.getVertexColors();
+
+    std::mt19937 rng(12345);
+    std::uniform_real_distribution<float> dist(0.0f, 1000.0f);
 
     std::vector<Particle> particles(positions.size());
     for (size_t i = 0; i < positions.size(); i++) {
         particles[i].pos = {(float)positions[i][0], (float)positions[i][1], (float)positions[i][2]};
         particles[i].home = particles[i].pos;
         particles[i].color = {colors[i][0], colors[i][1], colors[i][2], 255};
+        particles[i].vectorSeed = { dist(rng), dist(rng), dist(rng) };
     }
     const float s = 0.0005f;
 
@@ -73,7 +97,19 @@ int main() {
         return 1;
     }
 
+    float noiseSpeed = 0.5f;
+    float amplitude  = 0.001f;
     for (int frame = 0; frame < TOTAL_FRAMES && !WindowShouldClose(); frame++) {
+        float time = frame * DT;
+        float t = time * noiseSpeed;
+
+        for (auto& p : particles) {
+            float nx = noise.GetNoise(p.vectorSeed.x, t, 0.0f);
+            float ny = noise.GetNoise(p.vectorSeed.y, t, 100.0f);
+            float nz = noise.GetNoise(p.vectorSeed.z, t, 200.0f);
+            p.pos = Vector3Add(p.home, Vector3Scale({nx, ny, nz}, amplitude));
+        }
+
         cam.position = Vector3Add(
             cam.target,
             Vector3RotateByAxisAngle(Vector3Subtract(cam.position, cam.target), cam.up, ROT_SPEED * DT));
@@ -81,9 +117,13 @@ int main() {
         BeginTextureMode(target);
             ClearBackground({5, 5, 12, 255});
             BeginMode3D(cam);
-                for (const auto& p : particles) DrawCubeV(p.pos, {s, s, s}, p.color);
+            for (const auto& p : particles) {
+                DrawCubeV(p.pos, {s, s, s}, p.color);
+            }
             EndMode3D();
         EndTextureMode();
+
+        // LoadImageFromTexture, fwrite, BeginDrawing, etc. stay exactly as they are
 
         Image img = LoadImageFromTexture(target.texture);
         size_t bytes = (size_t)W * H * 4;
@@ -99,6 +139,7 @@ int main() {
             DrawTextureRec(target.texture, {0, 0, (float)W, -(float)H}, {0, 0}, WHITE);
             DrawText(TextFormat("frame %d / %d", frame + 1, TOTAL_FRAMES), 20, 20, 30, RAYWHITE);
         EndDrawing();
+
     }
 
     PCLOSE(ff);
