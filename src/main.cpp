@@ -1,134 +1,108 @@
 #include "raylib.h"
+#include "raymath.h"
+#include "happly.h"
+#include <array>
+#include <cstdio>
+#include <string>
 #include <vector>
-#include <cstdlib>
-#include <cmath>
 
-inline double frameToTime(size_t frame, double fps) { return frame / fps; }
-
-inline float frand() { return std::rand() / (float)RAND_MAX; }            // 0..1
-inline float frandRange(float a, float b) { return a + (b - a) * frand(); }
+#ifdef _WIN32
+  #define POPEN  _popen
+  #define PCLOSE _pclose
+  #define POPEN_MODE "wb"
+#else
+  #define POPEN  popen
+  #define PCLOSE pclose
+  #define POPEN_MODE "w"
+#endif
 
 struct Particle {
-    float u0      = 0.0f; 
-    float strand  = 0.0f;
-    float dTheta  = 0.0f;
-    float dRadius = 1.0f;
-
-
-    float freq[3][2];
-    float phase[3][2];
-    float amp = 1.0f;
-
+    Vector3 home = {0, 0, 0};
     Vector3 pos = {0, 0, 0};
     Color color = {255, 255, 255, 255};
 };
 
-inline float wander(const Particle& p, int ch, float t) {
-    return 0.65f * std::sin(p.freq[ch][0] * t + p.phase[ch][0])
-         + 0.35f * std::sin(p.freq[ch][1] * t + p.phase[ch][1]);
-}
-
-inline float smoothTo(float current, float target, float tau, float dt) {
-    float alpha = 1.0f - std::exp(-dt / tau);
-    return current + (target - current) * alpha;
-}
-
 int main() {
-    InitWindow(1920, 1080, "pointviz test");
-    SetTargetFPS(60);
+    constexpr int   W            = 1920;
+    constexpr int   H            = 1080;
+    constexpr int   FPS          = 60;
+    constexpr int   DURATION_SEC = 10;
+    constexpr int   TOTAL_FRAMES = FPS * DURATION_SEC;
+    constexpr float DT           = 1.0f / FPS;
+    constexpr float ROT_SPEED    = 0.02f; 
+    const std::string outFile    = "fern.mp4";
+
+    InitWindow(W, H, "pointviz render");
+    SetTargetFPS(0);
 
     Camera3D cam{};
-    cam.position = {8.0f, 6.0f, 8.0f};
-    cam.target = {0.0f, 0.0f, 0.0f};
-    cam.up = {0.0f, 1.0f, 0.0f};
+    cam.position = {0.65f, 0.65f, 0.4f};
+    cam.target = {0.0f, 0.0f, 0.2f};
+    cam.up = {0.0f, 0.0f, 1.0f};
     cam.fovy = 45.0f;
     cam.projection = CAMERA_PERSPECTIVE;
 
-    const float FPS_F = 60.0f;
-    const float v = 0.05f; 
-    const float k = 2.0f;
-    const float H = 8.0f;
-    const float R = 1.5f;
+    happly::PLYData ply("C:/Users/Wreck/OneDrive/Desktop/raylib/data/fern.ply");
+    std::vector<std::array<double, 3>> positions = ply.getVertexPositions();
+    std::vector<std::array<unsigned char, 3>> colors = ply.getVertexColors();
 
-    float driftTheta  = 0.05f;
-    float driftRadius = 0.05f;    
-    float driftY = 0.25f;
+    std::vector<Particle> particles(positions.size());
+    for (size_t i = 0; i < positions.size(); i++) {
+        particles[i].pos = {(float)positions[i][0], (float)positions[i][1], (float)positions[i][2]};
+        particles[i].home = particles[i].pos;
+        particles[i].color = {colors[i][0], colors[i][1], colors[i][2], 255};
+    }
+    const float s = 0.0005f;
 
-    float targetDriftTheta  = 0.05f;
-    float targetDriftRadius = 0.05f;    
-    float targetDriftY = 0.25f;
+    RenderTexture2D target = LoadRenderTexture(W, H);
 
-    const float camRotation = 0.2f;
+    //ffmpeg stuff
+    std::string cmd =
+        "ffmpeg -y -loglevel error "
+        "-f rawvideo -pix_fmt rgba -s " + std::to_string(W) + "x" + std::to_string(H) +
+        " -framerate " + std::to_string(FPS) + " -i - "
+        "-vf \"vflip,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p\" "
+        "-c:v libx264 -preset slow -crf 16 -r " + std::to_string(FPS) + " "
+        "-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv "
+        "-movflags +faststart \"" + outFile + "\"";
 
-    const float dt  = 1.0f / FPS_F;
-    const float tau = 0.5f;
-
-    std::vector<Particle> particles(4000);
-    for (auto& p : particles) {
-        p.u0 = frand();
-        p.strand = frand() > 0.5f ? 0.0f : 1.0f;
-        p.color = p.strand == 0.0f ? Color{255, 255, 0, 255} : Color{255, 0, 255, 255};
-
-        p.dTheta  = frandRange(-0.12f, 0.12f);
-        p.dRadius = frandRange(0.92f, 1.08f);
-
-        for (int c = 0; c < 3; ++c) {
-            p.freq[c][0]  = frandRange(0.2f, 1.0f);
-            p.freq[c][1]  = frandRange(0.6f, 2.3f);
-            p.phase[c][0] = frandRange(0.0f, 6.2831853f);
-            p.phase[c][1] = frandRange(0.0f, 6.2831853f);
-        }
-        p.amp = frandRange(0.5f, 1.5f);
+    FILE* ff = POPEN(cmd.c_str(), POPEN_MODE);
+    if (!ff) {
+        std::fprintf(stderr, "Could not start ffmpeg (is it on your PATH?)\n");
+        CloseWindow();
+        return 1;
     }
 
-    size_t frame = 0;
-    while (!WindowShouldClose()) {
-        float t = (float)frameToTime(frame, FPS_F);
-        cam.position = { 11.3f * std::cos(t * camRotation), 6.0f, 11.3f * std::sin(t * camRotation) };
+    for (int frame = 0; frame < TOTAL_FRAMES && !WindowShouldClose(); frame++) {
+        cam.position = Vector3Add(
+            cam.target,
+            Vector3RotateByAxisAngle(Vector3Subtract(cam.position, cam.target), cam.up, ROT_SPEED * DT));
 
-        for (auto& p : particles) {
-            float u  = std::fmod (p.u0 + v * t, 1.0f);
+        BeginTextureMode(target);
+            ClearBackground({5, 5, 12, 255});
+            BeginMode3D(cam);
+                for (const auto& p : particles) DrawCubeV(p.pos, {s, s, s}, p.color);
+            EndMode3D();
+        EndTextureMode();
 
-            float wTheta = wander(p, 0, t) * driftTheta  * p.amp;
-            float wRad   = wander(p, 1, t) * driftRadius * p.amp;
-            float wY     = wander(p, 2, t) * driftY * p.amp;
-
-            float th = k * 2.0f * PI * u + PI * p.strand + p.dTheta + wTheta;
-            float r  = R * p.dRadius * (1.0f + wRad);
-
-            p.pos = { r * std::cos(th),
-                      (u - 0.5f) * H + wY,
-                      r * std::sin(th) };
+        Image img = LoadImageFromTexture(target.texture);
+        size_t bytes = (size_t)W * H * 4;
+        size_t written = fwrite(img.data, 1, bytes, ff);
+        UnloadImage(img);
+        if (written != bytes) {
+            std::fprintf(stderr, "ffmpeg pipe closed early\n");
+            break;
         }
-
-        if (frame >= 2000) {
-            targetDriftTheta  = 0.35f * std::cos(2.0f * PI * frame / 240.0f);
-            targetDriftRadius = 0.60f * std::cos(2.0f * PI * frame / 240.0f);
-            targetDriftY = 0.5f * std::cos(2.0f * PI * frame / 240.0f);
-        } 
-        else if(frame < 1500){
-            targetDriftTheta  = 0.7f;
-            targetDriftRadius = 0.7f;
-            targetDriftY = 1.0f;
-        }
-        else {
-            targetDriftTheta  = 0.05f;
-            targetDriftRadius = 0.05f;
-        }
-
-        driftTheta = smoothTo(driftTheta, targetDriftTheta, tau, dt);
-        driftRadius = smoothTo(driftRadius, targetDriftRadius, tau, dt);
-        driftY = smoothTo(driftY, targetDriftY, tau, dt);
 
         BeginDrawing();
-        ClearBackground({5, 5, 12, 255});
-        BeginMode3D(cam);
-        for (const auto& p : particles) DrawPoint3D(p.pos, p.color);
-        EndMode3D();
+            ClearBackground(BLACK);
+            DrawTextureRec(target.texture, {0, 0, (float)W, -(float)H}, {0, 0}, WHITE);
+            DrawText(TextFormat("frame %d / %d", frame + 1, TOTAL_FRAMES), 20, 20, 30, RAYWHITE);
         EndDrawing();
-
-        ++frame;
     }
 
+    PCLOSE(ff);
+    UnloadRenderTexture(target);
     CloseWindow();
+    return 0;
 }
