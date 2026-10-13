@@ -8,6 +8,8 @@
 #include <cmath>
 #include <random>
 #include "FastNoiseLite.h"
+#include "DSP.h"
+#include "dr_wav.h"
 
 #ifdef _WIN32
   #define POPEN  _popen
@@ -38,6 +40,38 @@ float randomPhase(){
     return random_value * PI;
 }
 
+bool loadWavLeft(const char* path, std::vector<float>& left,
+                 unsigned int& sampleRate)
+{
+    drwav wav;
+    if (!drwav_init_file(&wav, path, nullptr)) {
+        std::fprintf(stderr, "Failed to open %s\n", path);
+        return false;
+    }
+
+    sampleRate = wav.sampleRate;
+    const unsigned int channels = wav.channels;
+
+    left.clear();
+    left.reserve(wav.totalPCMFrameCount);
+
+    constexpr drwav_uint64 CHUNK_FRAMES = 4096;
+    std::vector<float> chunk(CHUNK_FRAMES * channels);
+
+    for (;;) {
+        drwav_uint64 framesRead =
+            drwav_read_pcm_frames_f32(&wav, CHUNK_FRAMES, chunk.data());
+        if (framesRead == 0) break;
+
+        for (drwav_uint64 i = 0; i < framesRead; ++i)
+            left.push_back(chunk[i * channels]);
+    }
+
+    drwav_uninit(&wav);
+    return true;
+}
+
+
 int main() {
     constexpr int   W            = 1920;
     constexpr int   H            = 1080;
@@ -46,6 +80,7 @@ int main() {
     constexpr int   TOTAL_FRAMES = FPS * DURATION_SEC;
     constexpr float DT           = 1.0f / FPS;
     constexpr float ROT_SPEED    = 0.02f; 
+    const float smoothTime = 0.5f;
     const std::string outFile    = "fern.mp4";
 
     InitWindow(W, H, "pointviz render");
@@ -65,6 +100,13 @@ int main() {
     happly::PLYData ply("C:/Users/Wreck/OneDrive/Desktop/raylib/data/fern.ply");
     std::vector<std::array<double, 3>> positions = ply.getVertexPositions();
     std::vector<std::array<unsigned char, 3>> colors = ply.getVertexColors();
+
+    std::vector<float> left;
+    unsigned int sampleRate;
+
+    if (loadWavLeft("C:/Users/Wreck/OneDrive/Desktop/raylib/data/test.wav", left, sampleRate)) {
+        std::printf("%zu samples @ %u Hz\n", left.size(), sampleRate);
+    }
 
     std::mt19937 rng(12345);
     std::uniform_real_distribution<float> dist(0.0f, 1000.0f);
@@ -97,17 +139,29 @@ int main() {
         return 1;
     }
 
-    float noiseSpeed = 0.5f;
-    float amplitude  = 0.001f;
+    float noiseSpeed = 0.3f;
+    float targetAmplitude  = 0.001f;
+    float currentAmplitude = 0.001f;
     for (int frame = 0; frame < TOTAL_FRAMES && !WindowShouldClose(); frame++) {
         float time = frame * DT;
         float t = time * noiseSpeed;
+        float sample = frame * 735;
+
+        if(frame < 200){
+            targetAmplitude += 0.0001f;
+        }
+        else if(frame < 400){
+            targetAmplitude -=  0.0001f;
+        }
+
+        currentAmplitude += (targetAmplitude - currentAmplitude) * (1.0f - std::exp(-DT / smoothTime));
+        
 
         for (auto& p : particles) {
             float nx = noise.GetNoise(p.vectorSeed.x, t, 0.0f);
             float ny = noise.GetNoise(p.vectorSeed.y, t, 100.0f);
             float nz = noise.GetNoise(p.vectorSeed.z, t, 200.0f);
-            p.pos = Vector3Add(p.home, Vector3Scale({nx, ny, nz}, amplitude));
+            p.pos = Vector3Add(p.home, Vector3Scale({nx, ny, nz}, currentAmplitude));
         }
 
         cam.position = Vector3Add(
@@ -122,8 +176,6 @@ int main() {
             }
             EndMode3D();
         EndTextureMode();
-
-        // LoadImageFromTexture, fwrite, BeginDrawing, etc. stay exactly as they are
 
         Image img = LoadImageFromTexture(target.texture);
         size_t bytes = (size_t)W * H * 4;
