@@ -10,6 +10,7 @@
 #include "FastNoiseLite.h"
 #include "DSP.h"
 #include "dr_wav.h"
+#include <complex>
 
 #ifdef _WIN32
   #define POPEN  _popen
@@ -20,6 +21,8 @@
   #define PCLOSE pclose
   #define POPEN_MODE "w"
 #endif
+
+using cpx = std::complex<double>;
 
 struct Particle {
     Vector3 home = {0, 0, 0};
@@ -40,7 +43,7 @@ float randomPhase(){
     return random_value * PI;
 }
 
-bool loadWavLeft(const char* path, std::vector<float>& left,
+bool loadWavLeft(const char* path, std::vector<double>& left,
                  unsigned int& sampleRate)
 {
     drwav wav;
@@ -76,11 +79,11 @@ int main() {
     constexpr int   W            = 1920;
     constexpr int   H            = 1080;
     constexpr int   FPS          = 60;
-    constexpr int   DURATION_SEC = 10;
+    constexpr int   DURATION_SEC = 60;
     constexpr int   TOTAL_FRAMES = FPS * DURATION_SEC;
     constexpr float DT           = 1.0f / FPS;
     constexpr float ROT_SPEED    = 0.02f; 
-    const float smoothTime = 0.5f;
+    const float smoothTime = 1.0f; //5.0 seems like a good balance for now
     const std::string outFile    = "fern.mp4";
 
     InitWindow(W, H, "pointviz render");
@@ -101,11 +104,22 @@ int main() {
     std::vector<std::array<double, 3>> positions = ply.getVertexPositions();
     std::vector<std::array<unsigned char, 3>> colors = ply.getVertexColors();
 
-    std::vector<float> left;
+    std::vector<double> left;
     unsigned int sampleRate;
 
-    if (loadWavLeft("C:/Users/Wreck/OneDrive/Desktop/raylib/data/test.wav", left, sampleRate)) {
+    if (loadWavLeft("C:/Users/Wreck/OneDrive/Desktop/raylib/data/SoulmateTest.wav", left, sampleRate)) {
         std::printf("%zu samples @ %u Hz\n", left.size(), sampleRate);
+    }
+
+    double peak = 0;
+    for(auto& sample : left){
+        if(std::abs(sample) > peak){
+            peak = std::abs(sample);
+        }
+    }
+
+    for(auto& sample : left){
+        sample /= peak;
     }
 
     std::mt19937 rng(12345);
@@ -123,12 +137,18 @@ int main() {
     RenderTexture2D target = LoadRenderTexture(W, H);
 
     //ffmpeg stuff
+    const std::string wavPath = "C:/Users/Wreck/OneDrive/Desktop/raylib/data/SoulmateTest.wav";
+
     std::string cmd =
         "ffmpeg -y -loglevel error "
         "-f rawvideo -pix_fmt rgba -s " + std::to_string(W) + "x" + std::to_string(H) +
         " -framerate " + std::to_string(FPS) + " -i - "
+        "-i \"" + wavPath + "\" "
+        "-map 0:v -map 1:a "
         "-vf \"vflip,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p\" "
         "-c:v libx264 -preset slow -crf 16 -r " + std::to_string(FPS) + " "
+        "-c:a aac -b:a 192k "
+        "-t " + std::to_string(DURATION_SEC) + " "
         "-colorspace bt709 -color_primaries bt709 -color_trc bt709 -color_range tv "
         "-movflags +faststart \"" + outFile + "\"";
 
@@ -139,20 +159,28 @@ int main() {
         return 1;
     }
 
-    float noiseSpeed = 0.3f;
+    int windowSize = 1024;
+    std::vector<double> hann = makeHann(windowSize);
+
+
+    float noiseSpeed = 1.5f; //original value 0.3
     float targetAmplitude  = 0.001f;
     float currentAmplitude = 0.001f;
     for (int frame = 0; frame < TOTAL_FRAMES && !WindowShouldClose(); frame++) {
         float time = frame * DT;
         float t = time * noiseSpeed;
-        float sample = frame * 735;
+        size_t sample = (size_t)frame * 735;
+        
 
-        if(frame < 200){
-            targetAmplitude += 0.0001f;
+        //fft math per frame:
+        std::vector<cpx> audioFrame = getFrame(left, sample, windowSize, hann);
+        std::vector<cpx> fftValues = naiveDFT(audioFrame);
+
+        float sum = 0.001f;
+        for(int i = 1; i < 900; i++){
+            sum += std::abs(fftValues[i]);
         }
-        else if(frame < 400){
-            targetAmplitude -=  0.0001f;
-        }
+        targetAmplitude = sum / 2000.0;
 
         currentAmplitude += (targetAmplitude - currentAmplitude) * (1.0f - std::exp(-DT / smoothTime));
         
