@@ -43,6 +43,15 @@ float randomPhase(){
     return random_value * PI;
 }
 
+Color randomColor(){
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    std::uniform_int_distribution<int> dis(0, 255);
+
+    return Color(dis(gen), dis(gen), dis(gen), 255);
+
+}
+
 bool loadWavLeft(const char* path, std::vector<double>& left,
                  unsigned int& sampleRate)
 {
@@ -82,7 +91,7 @@ int main() {
     constexpr int   DURATION_SEC = 60;
     constexpr int   TOTAL_FRAMES = FPS * DURATION_SEC;
     constexpr float DT           = 1.0f / FPS;
-    constexpr float ROT_SPEED    = 0.02f; 
+    constexpr float ROT_SPEED    = 0.01f; 
     const float smoothTime = 1.0f; //5.0 seems like a good balance for now
     const std::string outFile    = "fern.mp4";
 
@@ -124,6 +133,8 @@ int main() {
 
     std::mt19937 rng(12345);
     std::uniform_real_distribution<float> dist(0.0f, 1000.0f);
+    std::mt19937 colorRng(std::random_device{}());
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
 
     std::vector<Particle> particles(positions.size());
     for (size_t i = 0; i < positions.size(); i++) {
@@ -176,14 +187,20 @@ int main() {
         std::vector<cpx> audioFrame = getFrame(left, sample, windowSize, hann);
         std::vector<cpx> fftValues = naiveDFT(audioFrame);
 
-        float sum = 0.001f;
-        for(int i = 1; i < 900; i++){
+        float sum = 0;
+        for(int i = 1; i < 500; i++){
             sum += std::abs(fftValues[i]);
         }
-        targetAmplitude = sum / 2000.0;
+        targetAmplitude = sum / 3000.0; //2000 was good but were trying other options
 
         currentAmplitude += (targetAmplitude - currentAmplitude) * (1.0f - std::exp(-DT / smoothTime));
         
+        float colorSum = 0;
+        for(int i = 1; i < 500; i++){
+            colorSum += std::abs(fftValues[i]);
+        }
+
+        float probability = std::min(colorSum / 5000.0, 0.50);
 
         for (auto& p : particles) {
             float nx = noise.GetNoise(p.vectorSeed.x, t, 0.0f);
@@ -200,7 +217,11 @@ int main() {
             ClearBackground({5, 5, 12, 255});
             BeginMode3D(cam);
             for (const auto& p : particles) {
-                DrawCubeV(p.pos, {s, s, s}, p.color);
+                if (unit(colorRng) < probability) {
+                    DrawCubeV(p.pos, {s, s, s}, randomColor());
+                } else {
+                    DrawCubeV(p.pos, {s, s, s}, p.color);
+                }
             }
             EndMode3D();
         EndTextureMode();
