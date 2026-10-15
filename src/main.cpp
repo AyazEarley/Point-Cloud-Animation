@@ -88,7 +88,7 @@ int main() {
     constexpr int   W            = 1920;
     constexpr int   H            = 1080;
     constexpr int   FPS          = 60;
-    constexpr int   DURATION_SEC = 60;
+    constexpr int   DURATION_SEC = 4;
     constexpr int   TOTAL_FRAMES = FPS * DURATION_SEC;
     constexpr float DT           = 1.0f / FPS;
     constexpr float ROT_SPEED    = 0.01f; 
@@ -116,7 +116,7 @@ int main() {
     std::vector<double> left;
     unsigned int sampleRate;
 
-    if (loadWavLeft("C:/Users/Wreck/OneDrive/Desktop/raylib/data/SoulmateTest.wav", left, sampleRate)) {
+    if (loadWavLeft("C:/Users/Wreck/OneDrive/Desktop/raylib/data/Soulmate15.wav", left, sampleRate)) {
         std::printf("%zu samples @ %u Hz\n", left.size(), sampleRate);
     }
 
@@ -148,7 +148,7 @@ int main() {
     RenderTexture2D target = LoadRenderTexture(W, H);
 
     //ffmpeg stuff
-    const std::string wavPath = "C:/Users/Wreck/OneDrive/Desktop/raylib/data/SoulmateTest.wav";
+    const std::string wavPath = "C:/Users/Wreck/OneDrive/Desktop/raylib/data/Soulmate15.wav";
 
     std::string cmd =
         "ffmpeg -y -loglevel error "
@@ -173,10 +173,10 @@ int main() {
     int windowSize = 1024;
     std::vector<double> hann = makeHann(windowSize);
 
-
     float noiseSpeed = 1.5f; //original value 0.3
     float targetAmplitude  = 0.001f;
     float currentAmplitude = 0.001f;
+    
     for (int frame = 0; frame < TOTAL_FRAMES && !WindowShouldClose(); frame++) {
         float time = frame * DT;
         float t = time * noiseSpeed;
@@ -194,13 +194,6 @@ int main() {
         targetAmplitude = sum / 3000.0; //2000 was good but were trying other options
 
         currentAmplitude += (targetAmplitude - currentAmplitude) * (1.0f - std::exp(-DT / smoothTime));
-        
-        float colorSum = 0;
-        for(int i = 1; i < 500; i++){
-            colorSum += std::abs(fftValues[i]);
-        }
-
-        float probability = std::min(colorSum / 5000.0, 0.50);
 
         for (auto& p : particles) {
             float nx = noise.GetNoise(p.vectorSeed.x, t, 0.0f);
@@ -217,11 +210,7 @@ int main() {
             ClearBackground({5, 5, 12, 255});
             BeginMode3D(cam);
             for (const auto& p : particles) {
-                if (unit(colorRng) < probability) {
-                    DrawCubeV(p.pos, {s, s, s}, randomColor());
-                } else {
-                    DrawCubeV(p.pos, {s, s, s}, p.color);
-                }
+                DrawCubeV(p.pos, {s, s, s}, p.color);
             }
             EndMode3D();
         EndTextureMode();
