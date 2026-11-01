@@ -88,7 +88,7 @@ int main() {
     constexpr int   W            = 1920;
     constexpr int   H            = 1080;
     constexpr int   FPS          = 60;
-    constexpr int   DURATION_SEC = 4;
+    constexpr int   DURATION_SEC = 390;
     constexpr int   TOTAL_FRAMES = FPS * DURATION_SEC;
     constexpr float DT           = 1.0f / FPS;
     constexpr float ROT_SPEED    = 0.01f; 
@@ -116,7 +116,7 @@ int main() {
     std::vector<double> left;
     unsigned int sampleRate;
 
-    if (loadWavLeft("C:/Users/Wreck/OneDrive/Desktop/raylib/data/Soulmate15.wav", left, sampleRate)) {
+    if (loadWavLeft("C:/Users/Wreck/OneDrive/Desktop/raylib/data/Soulmate.wav", left, sampleRate)) {
         std::printf("%zu samples @ %u Hz\n", left.size(), sampleRate);
     }
 
@@ -148,7 +148,7 @@ int main() {
     RenderTexture2D target = LoadRenderTexture(W, H);
 
     //ffmpeg stuff
-    const std::string wavPath = "C:/Users/Wreck/OneDrive/Desktop/raylib/data/Soulmate15.wav";
+    const std::string wavPath = "C:/Users/Wreck/OneDrive/Desktop/raylib/data/Soulmate.wav";
 
     std::string cmd =
         "ffmpeg -y -loglevel error "
@@ -191,7 +191,7 @@ int main() {
         for(int i = 1; i < 500; i++){
             sum += std::abs(fftValues[i]);
         }
-        targetAmplitude = sum / 3000.0; //2000 was good but were trying other options
+        targetAmplitude = sum / 1500.0; //2000 was good but were trying other options
 
         currentAmplitude += (targetAmplitude - currentAmplitude) * (1.0f - std::exp(-DT / smoothTime));
 
